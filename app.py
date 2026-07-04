@@ -6,6 +6,12 @@ import yfinance as yf
 import streamlit as st
 import plotly.graph_objects as go
 
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import cm
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
 st.set_page_config(
     page_title="Valuation Hub — Informes de Valoración",
     page_icon="📄",
@@ -20,7 +26,7 @@ BORDER = "#D9C8B4"
 CARD_BG = "#FFFDF9"
 
 # =========================
-# CSS (sin animaciones que puedan bloquear el render)
+# CSS
 # =========================
 st.markdown(
     f"""
@@ -102,31 +108,57 @@ def fmt_large(x):
     return f"{sign*v:,.0f}"
 
 
-def html_to_pdf_bytes(html_content):
-    try:
-        from weasyprint import HTML as WeasyHTML
-        buf = io.BytesIO()
-        WeasyHTML(string=html_content).write_pdf(buf)
-        buf.seek(0)
-        return buf.read()
-    except ImportError:
-        st.error("WeasyPrint no está instalado. Añade 'weasyprint' a requirements.txt.")
-        return None
-    except Exception as e:
-        st.warning(f"No se pudo generar el PDF: {e}")
-        return None
+def build_pdf_report(titulo, meta_lineas, tabla_headers, tabla_filas, veredicto_texto, disclaimer_texto):
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        topMargin=2*cm, bottomMargin=2*cm,
+        leftMargin=2*cm, rightMargin=2*cm
+    )
+    styles = getSampleStyleSheet()
 
+    style_title = ParagraphStyle(
+        "TitleGold", parent=styles["Heading1"],
+        textColor=colors.HexColor("#B68A52"), spaceAfter=6
+    )
+    style_meta = ParagraphStyle(
+        "Meta", parent=styles["Normal"],
+        textColor=colors.HexColor("#7A6856"), spaceAfter=12
+    )
+    style_disclaimer = ParagraphStyle(
+        "Disclaimer", parent=styles["Normal"],
+        fontSize=7, textColor=colors.HexColor("#A08F7C"), spaceBefore=20
+    )
+    style_veredicto = ParagraphStyle(
+        "Veredicto", parent=styles["Normal"],
+        backColor=colors.HexColor("#F9F4EC"),
+        borderPadding=8, spaceAfter=10
+    )
 
-PDF_BASE_CSS = """
-body { font-family: Arial, sans-serif; color: #2F241B; margin: 2cm; }
-h1 { color: #B68A52; margin-bottom: 0; }
-.meta { color: #7A6856; margin-top: 4px; }
-table { width: 100%; border-collapse: collapse; margin-top: 1.2rem; }
-th, td { border: 1px solid #D9C8B4; padding: 6px 8px; font-size: 11px; text-align: left; }
-th { background: #EFE2D2; }
-.veredicto { margin-top: 1.5rem; padding: 12px; background: #F9F4EC; border-radius: 8px; }
-.disclaimer { margin-top: 2rem; font-size: 9px; color: #A08F7C; }
-"""
+    elementos = [Paragraph(titulo, style_title)]
+    for linea in meta_lineas:
+        elementos.append(Paragraph(linea, style_meta))
+
+    tabla_data = [tabla_headers] + tabla_filas
+    tabla = Table(tabla_data, hAlign="LEFT")
+    tabla.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EFE2D2")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#2F241B")),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#D9C8B4")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#FFFDF9"), colors.HexColor("#FAF5EE")]),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    elementos.append(tabla)
+    elementos.append(Spacer(1, 16))
+    elementos.append(Paragraph(veredicto_texto, style_veredicto))
+    elementos.append(Paragraph(disclaimer_texto, style_disclaimer))
+
+    doc.build(elementos)
+    buf.seek(0)
+    return buf.read()
 
 
 # =========================
@@ -192,38 +224,6 @@ def compute_stock_valuations(info):
         m["Upside %"] = round((m["Valor"] - price) / price * 100, 1) if price else None
 
     return methods, price
-
-
-def generar_html_informe_accion(company_name, ticker, sector, industry, currency, price, df_val):
-    filas = "".join(
-        f"<tr><td>{r['Método']}</td><td>{r['Tipo']}</td><td>{r['Calidad']}</td>"
-        f"<td>{r['Valor']:.2f}</td><td>{r['Upside %']:+.1f}%</td></tr>"
-        for _, r in df_val.iterrows()
-    )
-    upside_medio = df_val["Upside %"].dropna().mean()
-    veredicto = (
-        "Infravalorada" if upside_medio and upside_medio > 15 else
-        "Sobrevalorada" if upside_medio and upside_medio < -15 else
-        "En línea con su valor razonable"
-    )
-    return f"""
-    <html><head><style>{PDF_BASE_CSS}</style></head>
-    <body>
-        <h1>Informe de Valoración — Acción</h1>
-        <div class="meta">{company_name} ({ticker}) · {sector} · {industry}</div>
-        <p>Precio actual: <b>{price:.2f} {currency}</b></p>
-        <table>
-            <tr><th>Método</th><th>Tipo</th><th>Calidad</th><th>Valor estimado</th><th>Upside</th></tr>
-            {filas}
-        </table>
-        <div class="veredicto">
-            <b>Upside medio:</b> {upside_medio:+.1f}% &nbsp;|&nbsp; <b>Veredicto:</b> {veredicto}
-        </div>
-        <div class="disclaimer">
-            Informe generado automáticamente con fines informativos. No constituye asesoramiento financiero.
-        </div>
-    </body></html>
-    """
 
 
 def modulo_acciones():
@@ -306,12 +306,29 @@ def modulo_acciones():
     st.subheader("Generar informe PDF")
 
     if st.button("📄 Generar PDF", key="stock_pdf_btn"):
-        html_informe = generar_html_informe_accion(company_name, ticker, sector, industry, currency, price, df_val)
-        pdf_bytes = html_to_pdf_bytes(html_informe)
-        if pdf_bytes:
-            st.session_state["stock_pdf_bytes"] = pdf_bytes
-            st.session_state["stock_pdf_name"] = f"informe_accion_{ticker}.pdf"
-            st.success("Informe generado correctamente.")
+        veredicto = (
+            "Infravalorada" if upside_medio and upside_medio > 15 else
+            "Sobrevalorada" if upside_medio and upside_medio < -15 else
+            "En línea con su valor razonable"
+        )
+        tabla_filas = [
+            [r["Método"], r["Tipo"], r["Calidad"], f"{r['Valor']:.2f}", f"{r['Upside %']:+.1f}%"]
+            for _, r in df_val.iterrows()
+        ]
+        pdf_bytes = build_pdf_report(
+            titulo=f"Informe de Valoración — {company_name} ({ticker})",
+            meta_lineas=[
+                f"{sector} · {industry} · {currency}",
+                f"Precio actual: {price:.2f} {currency}"
+            ],
+            tabla_headers=["Método", "Tipo", "Calidad", "Valor estimado", "Upside"],
+            tabla_filas=tabla_filas,
+            veredicto_texto=f"Upside medio: {upside_medio:+.1f}% | Veredicto: {veredicto}",
+            disclaimer_texto="Informe generado automáticamente con fines informativos. No constituye asesoramiento financiero."
+        )
+        st.session_state["stock_pdf_bytes"] = pdf_bytes
+        st.session_state["stock_pdf_name"] = f"informe_accion_{ticker}.pdf"
+        st.success("Informe generado correctamente.")
 
     if "stock_pdf_bytes" in st.session_state:
         st.download_button(
@@ -367,36 +384,6 @@ def compute_machinery_valuation(precio_nuevo, antiguedad, vida_util, horas_uso, 
     })
 
     return resultados, dep_total, grado_operatividad
-
-
-def generar_html_informe_maquinaria(nombre_activo, marca_modelo, precio_nuevo, antiguedad,
-                                     estado_pct, obsolescencia_pct, resultados, dep_total, grado_operatividad):
-    filas = "".join(
-        f"<tr><td>{r['Método']}</td><td>{r['Descripción']}</td><td>{r['Valor']:,.2f} €</td></tr>"
-        for r in resultados
-    )
-    valor_final = resultados[-1]["Valor"]
-    return f"""
-    <html><head><style>{PDF_BASE_CSS}</style></head>
-    <body>
-        <h1>Informe de Valoración — Maquinaria/Equipo</h1>
-        <div class="meta">{nombre_activo} · {marca_modelo}</div>
-        <p>Precio nuevo estimado: <b>{precio_nuevo:,.2f} €</b> · Antigüedad: <b>{antiguedad} años</b></p>
-        <p>Estado de conservación: <b>{estado_pct}/100</b> · Obsolescencia tecnológica: <b>{obsolescencia_pct}/100</b></p>
-        <table>
-            <tr><th>Método</th><th>Descripción</th><th>Valor estimado</th></tr>
-            {filas}
-        </table>
-        <div class="veredicto">
-            <b>Depreciación total aplicada:</b> {dep_total*100:.1f}% &nbsp;|&nbsp;
-            <b>Grado de operatividad:</b> {grado_operatividad*100:.1f}% &nbsp;|&nbsp;
-            <b>Valor recomendado:</b> {valor_final:,.2f} €
-        </div>
-        <div class="disclaimer">
-            Informe generado automáticamente con fines informativos. No sustituye una tasación pericial oficial.
-        </div>
-    </body></html>
-    """
 
 
 def modulo_maquinaria():
@@ -467,20 +454,21 @@ def modulo_maquinaria():
         st.subheader("Generar informe PDF")
 
         if st.button("📄 Generar PDF", key="maq_pdf_btn"):
-            html_informe = generar_html_informe_maquinaria(
-                st.session_state["maq_nombre"],
-                st.session_state["maq_marca"],
-                st.session_state["maq_precio_nuevo"],
-                st.session_state["maq_antiguedad"],
-                st.session_state["maq_estado"],
-                st.session_state["maq_obsolescencia"],
-                resultados, dep_total, grado_op
+            tabla_filas = [[r["Método"], r["Descripción"], f"{r['Valor']:,.2f} €"] for r in resultados]
+            pdf_bytes = build_pdf_report(
+                titulo=f"Informe de Valoración — {st.session_state['maq_nombre']}",
+                meta_lineas=[
+                    f"{st.session_state['maq_marca']} · Precio nuevo: {st.session_state['maq_precio_nuevo']:,.2f} €",
+                    f"Antigüedad: {st.session_state['maq_antiguedad']} años · Estado: {st.session_state['maq_estado']}/100 · Obsolescencia: {st.session_state['maq_obsolescencia']}/100"
+                ],
+                tabla_headers=["Método", "Descripción", "Valor estimado"],
+                tabla_filas=tabla_filas,
+                veredicto_texto=f"Depreciación total: {dep_total*100:.1f}% | Operatividad: {grado_op*100:.1f}% | Valor recomendado: {valor_final:,.2f} €",
+                disclaimer_texto="Informe generado automáticamente con fines informativos. No sustituye una tasación pericial oficial."
             )
-            pdf_bytes = html_to_pdf_bytes(html_informe)
-            if pdf_bytes:
-                st.session_state["maq_pdf_bytes"] = pdf_bytes
-                st.session_state["maq_pdf_name"] = f"informe_maquinaria_{st.session_state['maq_nombre'].replace(' ', '_')}.pdf"
-                st.success("Informe generado correctamente.")
+            st.session_state["maq_pdf_bytes"] = pdf_bytes
+            st.session_state["maq_pdf_name"] = f"informe_maquinaria_{st.session_state['maq_nombre'].replace(' ', '_')}.pdf"
+            st.success("Informe generado correctamente.")
 
         if "maq_pdf_bytes" in st.session_state:
             st.download_button(
