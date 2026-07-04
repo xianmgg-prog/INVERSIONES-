@@ -75,7 +75,7 @@ st.markdown(
 )
 
 st.title("📄 Valuation Hub")
-st.caption("Genera informes de valoración de acciones y activos físicos (maquinaria, equipos).")
+st.caption("Genera informes de valoración de acciones, activos físicos y compara opciones de financiación.")
 
 # =========================
 # HELPERS GENERALES
@@ -478,6 +478,8 @@ def modulo_maquinaria():
                 mime="application/pdf",
                 key="maq_pdf_download",
             )
+
+
 # =========================
 # MÓDULO 3 — FINANCIACIÓN
 # =========================
@@ -571,7 +573,7 @@ def modulo_financiacion():
         st.markdown("---")
         df_comp = pd.DataFrame([
             {"Opción": "Préstamo", "Cuota mensual (€)": r["prestamo"]["cuota"], "Coste total (€)": r["prestamo"]["coste_total"], "Propiedad": "Sí (desde el inicio)"},
-            {"Opción": "Leasing", "Cuota mensual (€)": r["leasing"]["cuota"], "Coste total (€)": r["leasing"]["coste_total"] , "Propiedad": "Sí (al finalizar)"},
+            {"Opción": "Leasing", "Cuota mensual (€)": r["leasing"]["cuota"], "Coste total (€)": r["leasing"]["coste_total"], "Propiedad": "Sí (al finalizar)"},
             {"Opción": "Renting", "Cuota mensual (€)": r["renting"]["cuota"], "Coste total (€)": r["renting"]["coste_total"], "Propiedad": "No"},
         ])
         st.dataframe(
@@ -630,14 +632,18 @@ def modulo_financiacion():
                 key="fin_pdf_download",
             )
 
+
 # =========================
 # NAVEGACIÓN PRINCIPAL
 # =========================
 
-tab1, tab2 = st.tabs(["📈 Acciones", "🏗️ Maquinaria"])
+tab1, tab2, tab3 = st.tabs(["📈 Acciones", "🏗️ Maquinaria", "💰 Financiación"])
 
 with tab1:
     modulo_acciones()
 
 with tab2:
     modulo_maquinaria()
+
+with tab3:
+    modulo_financiacion()
