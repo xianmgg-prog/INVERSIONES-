@@ -478,7 +478,157 @@ def modulo_maquinaria():
                 mime="application/pdf",
                 key="maq_pdf_download",
             )
+# =========================
+# MÓDULO 3 — FINANCIACIÓN
+# =========================
 
+def calcular_cuota_frances(capital, tasa_anual, anios, pagos_por_anio=12):
+    i = tasa_anual / pagos_por_anio
+    n = anios * pagos_por_anio
+    if i == 0:
+        return capital / n
+    cuota = capital * i * (1 + i) ** n / ((1 + i) ** n - 1)
+    return cuota
+
+
+def tabla_amortizacion_frances(capital, tasa_anual, anios, pagos_por_anio=12):
+    i = tasa_anual / pagos_por_anio
+    n = int(anios * pagos_por_anio)
+    cuota = calcular_cuota_frances(capital, tasa_anual, anios, pagos_por_anio)
+
+    filas = []
+    capital_pendiente = capital
+    total_intereses = 0.0
+    for periodo in range(1, n + 1):
+        interes = capital_pendiente * i
+        amortizacion = cuota - interes
+        capital_pendiente -= amortizacion
+        total_intereses += interes
+        filas.append({
+            "Periodo": periodo,
+            "Cuota": cuota,
+            "Interés": interes,
+            "Amortización": amortizacion,
+            "Capital pendiente": max(capital_pendiente, 0),
+        })
+    return filas, cuota, total_intereses
+
+
+def calcular_leasing(valor_activo, tasa_anual, anios, valor_residual_pct, pagos_por_anio=12):
+    valor_residual = valor_activo * (valor_residual_pct / 100)
+    capital_a_financiar = valor_activo - valor_residual
+    cuota = calcular_cuota_frances(capital_a_financiar, tasa_anual, anios, pagos_por_anio)
+    n = anios * pagos_por_anio
+    coste_total = cuota * n + valor_residual
+    return cuota, valor_residual, coste_total
+
+
+def calcular_renting(valor_activo, cuota_mensual_estimada_pct, anios):
+    n = anios * 12
+    cuota = valor_activo * (cuota_mensual_estimada_pct / 100)
+    coste_total = cuota * n
+    return cuota, coste_total
+
+
+def modulo_financiacion():
+    st.subheader("💰 Comparador de financiación")
+    st.caption("Compara préstamo, leasing y renting para la compra de un activo (maquinaria, vehículo, inmueble).")
+
+    with st.form("form_financiacion"):
+        col1, col2 = st.columns(2)
+        with col1:
+            valor_activo = st.number_input("Valor del activo (€)", min_value=0.0, value=50000.0, step=500.0)
+            anios = st.number_input("Plazo (años)", min_value=1, value=5, step=1)
+            tasa_prestamo = st.number_input("Tipo de interés préstamo (% anual)", min_value=0.0, value=6.0, step=0.1) / 100
+        with col2:
+            tasa_leasing = st.number_input("Tipo de interés leasing (% anual)", min_value=0.0, value=5.5, step=0.1) / 100
+            valor_residual_pct = st.number_input("Valor residual leasing (% del activo)", min_value=0.0, max_value=100.0, value=10.0, step=1.0)
+            cuota_renting_pct = st.number_input("Cuota mensual renting estimada (% del valor del activo)", min_value=0.0, value=2.5, step=0.1)
+
+        submitted = st.form_submit_button("Comparar opciones", type="primary")
+
+    if submitted:
+        filas_amort, cuota_prestamo, intereses_prestamo = tabla_amortizacion_frances(valor_activo, tasa_prestamo, anios)
+        coste_total_prestamo = cuota_prestamo * anios * 12
+
+        cuota_leasing, valor_residual, coste_total_leasing = calcular_leasing(
+            valor_activo, tasa_leasing, anios, valor_residual_pct
+        )
+
+        cuota_renting, coste_total_renting = calcular_renting(valor_activo, cuota_renting_pct, anios)
+
+        st.session_state["fin_resultados"] = {
+            "valor_activo": valor_activo,
+            "anios": anios,
+            "prestamo": {"cuota": cuota_prestamo, "coste_total": coste_total_prestamo, "intereses": intereses_prestamo},
+            "leasing": {"cuota": cuota_leasing, "coste_total": coste_total_leasing, "valor_residual": valor_residual},
+            "renting": {"cuota": cuota_renting, "coste_total": coste_total_renting},
+        }
+
+    if "fin_resultados" in st.session_state:
+        r = st.session_state["fin_resultados"]
+
+        st.markdown("---")
+        df_comp = pd.DataFrame([
+            {"Opción": "Préstamo", "Cuota mensual (€)": r["prestamo"]["cuota"], "Coste total (€)": r["prestamo"]["coste_total"], "Propiedad": "Sí (desde el inicio)"},
+            {"Opción": "Leasing", "Cuota mensual (€)": r["leasing"]["cuota"], "Coste total (€)": r["leasing"]["coste_total"] , "Propiedad": "Sí (al finalizar)"},
+            {"Opción": "Renting", "Cuota mensual (€)": r["renting"]["cuota"], "Coste total (€)": r["renting"]["coste_total"], "Propiedad": "No"},
+        ])
+        st.dataframe(
+            df_comp.style.format({"Cuota mensual (€)": "{:,.2f}", "Coste total (€)": "{:,.2f}"}),
+            use_container_width=True, hide_index=True
+        )
+
+        opcion_mas_barata = df_comp.loc[df_comp["Coste total (€)"].idxmin(), "Opción"]
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Cuota préstamo", f"{r['prestamo']['cuota']:,.2f} €/mes")
+        c2.metric("Cuota leasing", f"{r['leasing']['cuota']:,.2f} €/mes")
+        c3.metric("Cuota renting", f"{r['renting']['cuota']:,.2f} €/mes")
+
+        st.info(f"💡 La opción con menor coste total en {r['anios']} años es: **{opcion_mas_barata}**")
+
+        fig = go.Figure(go.Bar(
+            x=df_comp["Opción"], y=df_comp["Coste total (€)"],
+            marker_color=[ACCENT_GOLD, "#5E8B6F", "#B85C5C"],
+        ))
+        fig.update_layout(
+            height=350, template="plotly_white",
+            yaxis_title="Coste total (€)",
+            margin=dict(l=10, r=10, t=10, b=10),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("Generar informe PDF")
+
+        if st.button("📄 Generar PDF", key="fin_pdf_btn"):
+            tabla_filas = [
+                ["Préstamo", f"{r['prestamo']['cuota']:,.2f} €", f"{r['prestamo']['coste_total']:,.2f} €", "Sí (desde el inicio)"],
+                ["Leasing", f"{r['leasing']['cuota']:,.2f} €", f"{r['leasing']['coste_total']:,.2f} €", "Sí (al finalizar)"],
+                ["Renting", f"{r['renting']['cuota']:,.2f} €", f"{r['renting']['coste_total']:,.2f} €", "No"],
+            ]
+            pdf_bytes = build_pdf_report(
+                titulo="Informe Comparativo de Financiación",
+                meta_lineas=[
+                    f"Valor del activo: {r['valor_activo']:,.2f} € · Plazo: {r['anios']} años"
+                ],
+                tabla_headers=["Opción", "Cuota mensual", "Coste total", "Propiedad"],
+                tabla_filas=tabla_filas,
+                veredicto_texto=f"Opción recomendada por menor coste total: {opcion_mas_barata}",
+                disclaimer_texto="Informe generado automáticamente con fines informativos. No constituye asesoramiento financiero."
+            )
+            st.session_state["fin_pdf_bytes"] = pdf_bytes
+            st.session_state["fin_pdf_name"] = "informe_financiacion.pdf"
+            st.success("Informe generado correctamente.")
+
+        if "fin_pdf_bytes" in st.session_state:
+            st.download_button(
+                "⬇️ Descargar informe PDF",
+                data=st.session_state["fin_pdf_bytes"],
+                file_name=st.session_state["fin_pdf_name"],
+                mime="application/pdf",
+                key="fin_pdf_download",
+            )
 
 # =========================
 # NAVEGACIÓN PRINCIPAL
