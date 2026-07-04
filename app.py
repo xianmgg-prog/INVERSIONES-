@@ -274,4 +274,148 @@ def modulo_acciones():
         pdf_bytes = html_to_pdf_bytes(html_informe)
         if pdf_bytes:
             st.session_state["stock_pdf_bytes"] = pdf_bytes
-            st.session_state["stock_pdf_name"] 
+            st.session_state["stock_pdf_name"] = f"informe_accion_{ticker}.pdf"
+            st.success("Informe generado correctamente.")
+
+    if "stock_pdf_bytes" in st.session_state:
+        st.download_button(
+            "⬇️ Descargar informe PDF",
+            data=st.session_state["stock_pdf_bytes"],
+            file_name=st.session_state["stock_pdf_name"],
+            mime="application/pdf",
+            key="stock_pdf_download",
+        )
+
+
+# =========================
+# MÓDULO 2 — MAQUINARIA
+# =========================
+
+def compute_machinery_valuation(precio_nuevo, antiguedad, vida_util, horas_uso, horas_max,
+                                 estado_pct, obsolescencia_pct, precio_mercado_similar):
+    """
+    Método de coste de reposición - depreciación (CRN - D) + método de mercado.
+    """
+    # Depreciación por tiempo (lineal, sobre vida útil)
+    dep_tiempo = min(antiguedad / vida_util, 1.0) if vida_util > 0 else 1.0
+
+    # Depreciación por uso (horas)
+    dep_uso = min(horas_uso / horas_max, 1.0) if horas_max > 0 else 0.0
+
+    # Depreciación combinada por estado físico y obsolescencia tecnológica (0-100)
+    dep_estado = (100 - estado_pct) / 100
+    dep_obsolescencia = obsolescencia_pct / 100
+
+    # Depreciación total ponderada (métodos combinados, capada a 95%)
+    dep_total = min(
+        0.35 * dep_tiempo + 0.25 * dep_uso + 0.25 * dep_estado + 0.15 * dep_obsolescencia,
+        0.95
+    )
+
+    grado_operatividad = 1 - dep_obsolescencia * 0.3  # penalización adicional si muy obsoleta
+
+    valor_coste_reposicion = precio_nuevo * (1 - dep_total) * grado_operatividad
+
+    resultados = [
+        {
+            "Método": "Coste de reposición − Depreciación",
+            "Descripción": f"Precio nuevo × (1 − depreciación total {dep_total*100:.1f}%) × grado operatividad {grado_operatividad*100:.1f}%",
+            "Valor": valor_coste_reposicion,
+        }
+    ]
+
+    if precio_mercado_similar and precio_mercado_similar > 0:
+        resultados.append({
+            "Método": "Método de mercado (comparables)",
+            "Descripción": "Precio de mercado de equipos similares de segunda mano",
+            "Valor": precio_mercado_similar,
+        })
+
+    valores = [r["Valor"] for r in resultados]
+    valor_medio = sum(valores) / len(valores)
+
+    resultados.append({
+        "Método": "Valor medio recomendado",
+        "Descripción": "Promedio de los métodos aplicados",
+        "Valor": valor_medio,
+    })
+
+    return resultados, dep_total, grado_operatividad
+
+
+def generar_html_informe_maquinaria(nombre_activo, marca_modelo, precio_nuevo, antiguedad,
+                                     estado_pct, obsolescencia_pct, resultados, dep_total, grado_operatividad):
+    filas = "".join(
+        f"<tr><td>{r['Método']}</td><td>{r['Descripción']}</td><td>{r['Valor']:,.2f} €</td></tr>"
+        for r in resultados
+    )
+    valor_final = resultados[-1]["Valor"]
+    return f"""
+    <html><head><style>{PDF_BASE_CSS}</style></head>
+    <body>
+        <h1>Informe de Valoración — Maquinaria/Equipo</h1>
+        <div class="meta">{nombre_activo} · {marca_modelo}</div>
+        <p>Precio nuevo estimado: <b>{precio_nuevo:,.2f} €</b> · Antigüedad: <b>{antiguedad} años</b></p>
+        <p>Estado de conservación: <b>{estado_pct}/100</b> · Obsolescencia tecnológica: <b>{obsolescencia_pct}/100</b></p>
+        <table>
+            <tr><th>Método</th><th>Descripción</th><th>Valor estimado</th></tr>
+            {filas}
+        </table>
+        <div class="veredicto">
+            <b>Depreciación total aplicada:</b> {dep_total*100:.1f}% &nbsp;|&nbsp;
+            <b>Grado de operatividad:</b> {grado_operatividad*100:.1f}% &nbsp;|&nbsp;
+            <b>Valor recomendado:</b> {valor_final:,.2f} €
+        </div>
+        <div class="disclaimer">
+            Informe generado automáticamente con fines informativos. No sustituye una tasación pericial oficial.
+        </div>
+    </body></html>
+    """
+
+
+def modulo_maquinaria():
+    st.subheader("🏗️ Valoración de maquinaria y equipos")
+    st.caption("Introduce los datos del activo para estimar su valor actual por coste de reposición y comparables de mercado.")
+
+    with st.form("form_maquinaria"):
+        col1, col2 = st.columns(2)
+        with col1:
+            nombre_activo = st.text_input("Nombre del activo", "Torno CNC")
+            marca_modelo = st.text_input("Marca / Modelo", "")
+            precio_nuevo = st.number_input("Precio de compra nuevo (€)", min_value=0.0, value=50000.0, step=500.0)
+            antiguedad = st.number_input("Antigüedad (años)", min_value=0.0, value=5.0, step=0.5)
+            vida_util = st.number_input("Vida útil estimada (años)", min_value=1.0, value=15.0, step=1.0)
+        with col2:
+            horas_uso = st.number_input("Horas de uso acumuladas", min_value=0.0, value=8000.0, step=100.0)
+            horas_max = st.number_input("Horas de vida útil estimadas", min_value=1.0, value=40000.0, step=1000.0)
+            estado_pct = st.slider("Estado de conservación (0=muy malo, 100=como nuevo)", 0, 100, 70)
+            obsolescencia_pct = st.slider("Obsolescencia tecnológica (0=actual, 100=obsoleta)", 0, 100, 20)
+            precio_mercado_similar = st.number_input("Precio de mercado de equipos similares (€, opcional)", min_value=0.0, value=0.0, step=500.0)
+
+        submitted = st.form_submit_button("Calcular valoración", type="primary")
+
+    if submitted:
+        resultados, dep_total, grado_op = compute_machinery_valuation(
+            precio_nuevo, antiguedad, vida_util, horas_uso, horas_max,
+            estado_pct, obsolescencia_pct, precio_mercado_similar or None
+        )
+        st.session_state["maq_resultados"] = resultados
+        st.session_state["maq_dep_total"] = dep_total
+        st.session_state["maq_grado_op"] = grado_op
+        st.session_state["maq_nombre"] = nombre_activo
+        st.session_state["maq_marca"] = marca_modelo
+        st.session_state["maq_precio_nuevo"] = precio_nuevo
+        st.session_state["maq_antiguedad"] = antiguedad
+        st.session_state["maq_estado"] = estado_pct
+        st.session_state["maq_obsolescencia"] = obsolescencia_pct
+
+    if "maq_resultados" in st.session_state:
+        resultados = st.session_state["maq_resultados"]
+        dep_total = st.session_state["maq_dep_total"]
+        grado_op = st.session_state["maq_grado_op"]
+
+        st.markdown("---")
+        df_res = pd.DataFrame(resultados)
+        st.dataframe(df_res, use_container_width=True, hide_index=True)
+
+        
