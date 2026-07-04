@@ -19,10 +19,23 @@ TEXT_SECONDARY = "#7A6856"
 BORDER = "#D9C8B4"
 CARD_BG = "#FFFDF9"
 
+# =========================
+# CSS (sin animaciones que puedan bloquear el render)
+# =========================
 st.markdown(
     f"""
     <style>
-    .stApp {{ background: {BG_MAIN}; color: {TEXT_PRIMARY}; font-family: "Inter", sans-serif; }}
+    .stApp {{
+        background: {BG_MAIN};
+        color: {TEXT_PRIMARY};
+        font-family: "Inter", "Segoe UI", sans-serif;
+    }}
+
+    .block-container {{
+        padding-top: 2rem;
+        max-width: 1200px;
+    }}
+
     .report-header {{
         background: {CARD_BG};
         border: 1px solid {BORDER};
@@ -30,10 +43,33 @@ st.markdown(
         padding: 1.2rem;
         margin-bottom: 1rem;
     }}
+
+    .stButton > button {{
+        background: {ACCENT_GOLD} !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 10px !important;
+        font-weight: 600 !important;
+    }}
+
+    .stTabs [data-baseweb="tab"] {{
+        background: {CARD_BG};
+        border-radius: 10px 10px 0 0;
+        color: {TEXT_SECONDARY};
+        padding: 0.6rem 1rem;
+    }}
+
+    .stTabs [aria-selected="true"] {{
+        color: {TEXT_PRIMARY} !important;
+        font-weight: 700 !important;
+    }}
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+st.title("📄 Valuation Hub")
+st.caption("Genera informes de valoración de acciones y activos físicos (maquinaria, equipos).")
 
 # =========================
 # HELPERS GENERALES
@@ -74,7 +110,7 @@ def html_to_pdf_bytes(html_content):
         buf.seek(0)
         return buf.read()
     except ImportError:
-        st.error("WeasyPrint no está instalado. Ejecuta `pip install weasyprint`.")
+        st.error("WeasyPrint no está instalado. Añade 'weasyprint' a requirements.txt.")
         return None
     except Exception as e:
         st.warning(f"No se pudo generar el PDF: {e}")
@@ -293,33 +329,23 @@ def modulo_acciones():
 
 def compute_machinery_valuation(precio_nuevo, antiguedad, vida_util, horas_uso, horas_max,
                                  estado_pct, obsolescencia_pct, precio_mercado_similar):
-    """
-    Método de coste de reposición - depreciación (CRN - D) + método de mercado.
-    """
-    # Depreciación por tiempo (lineal, sobre vida útil)
     dep_tiempo = min(antiguedad / vida_util, 1.0) if vida_util > 0 else 1.0
-
-    # Depreciación por uso (horas)
     dep_uso = min(horas_uso / horas_max, 1.0) if horas_max > 0 else 0.0
-
-    # Depreciación combinada por estado físico y obsolescencia tecnológica (0-100)
     dep_estado = (100 - estado_pct) / 100
     dep_obsolescencia = obsolescencia_pct / 100
 
-    # Depreciación total ponderada (métodos combinados, capada a 95%)
     dep_total = min(
         0.35 * dep_tiempo + 0.25 * dep_uso + 0.25 * dep_estado + 0.15 * dep_obsolescencia,
         0.95
     )
 
-    grado_operatividad = 1 - dep_obsolescencia * 0.3  # penalización adicional si muy obsoleta
-
+    grado_operatividad = 1 - dep_obsolescencia * 0.3
     valor_coste_reposicion = precio_nuevo * (1 - dep_total) * grado_operatividad
 
     resultados = [
         {
             "Método": "Coste de reposición − Depreciación",
-            "Descripción": f"Precio nuevo × (1 − depreciación total {dep_total*100:.1f}%) × grado operatividad {grado_operatividad*100:.1f}%",
+            "Descripción": f"Precio nuevo × (1 − depreciación {dep_total*100:.1f}%) × operatividad {grado_operatividad*100:.1f}%",
             "Valor": valor_coste_reposicion,
         }
     ]
@@ -375,7 +401,7 @@ def generar_html_informe_maquinaria(nombre_activo, marca_modelo, precio_nuevo, a
 
 def modulo_maquinaria():
     st.subheader("🏗️ Valoración de maquinaria y equipos")
-    st.caption("Introduce los datos del activo para estimar su valor actual por coste de reposición y comparables de mercado.")
+    st.caption("Introduce los datos del activo para estimar su valor por coste de reposición y comparables de mercado.")
 
     with st.form("form_maquinaria"):
         col1, col2 = st.columns(2)
@@ -418,4 +444,62 @@ def modulo_maquinaria():
         df_res = pd.DataFrame(resultados)
         st.dataframe(df_res, use_container_width=True, hide_index=True)
 
-        
+        valor_final = resultados[-1]["Valor"]
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Depreciación total", f"{dep_total*100:.1f}%")
+        c2.metric("Grado de operatividad", f"{grado_op*100:.1f}%")
+        c3.metric("Valor recomendado", f"{valor_final:,.2f} €")
+
+        fig = go.Figure(go.Bar(
+            x=[r["Valor"] for r in resultados],
+            y=[r["Método"] for r in resultados],
+            orientation="h",
+            marker_color=ACCENT_GOLD,
+        ))
+        fig.update_layout(
+            height=300, template="plotly_white",
+            xaxis_title="Valor estimado (€)",
+            margin=dict(l=10, r=10, t=10, b=10),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("Generar informe PDF")
+
+        if st.button("📄 Generar PDF", key="maq_pdf_btn"):
+            html_informe = generar_html_informe_maquinaria(
+                st.session_state["maq_nombre"],
+                st.session_state["maq_marca"],
+                st.session_state["maq_precio_nuevo"],
+                st.session_state["maq_antiguedad"],
+                st.session_state["maq_estado"],
+                st.session_state["maq_obsolescencia"],
+                resultados, dep_total, grado_op
+            )
+            pdf_bytes = html_to_pdf_bytes(html_informe)
+            if pdf_bytes:
+                st.session_state["maq_pdf_bytes"] = pdf_bytes
+                st.session_state["maq_pdf_name"] = f"informe_maquinaria_{st.session_state['maq_nombre'].replace(' ', '_')}.pdf"
+                st.success("Informe generado correctamente.")
+
+        if "maq_pdf_bytes" in st.session_state:
+            st.download_button(
+                "⬇️ Descargar informe PDF",
+                data=st.session_state["maq_pdf_bytes"],
+                file_name=st.session_state["maq_pdf_name"],
+                mime="application/pdf",
+                key="maq_pdf_download",
+            )
+
+
+# =========================
+# NAVEGACIÓN PRINCIPAL
+# =========================
+
+tab1, tab2 = st.tabs(["📈 Acciones", "🏗️ Maquinaria"])
+
+with tab1:
+    modulo_acciones()
+
+with tab2:
+    modulo_maquinaria()
